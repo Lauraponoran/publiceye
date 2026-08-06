@@ -6,3 +6,6 @@ try_image_result/
 *.DS_Store
 lib/
 __MACOSX/
+models/trained_models/Swin_ViCCT_large_22k_generic_1600_epochs.pth
+input_images/*
+!input_images/.gitkeep
