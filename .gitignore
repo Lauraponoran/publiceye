@@ -1,0 +1,8 @@
+venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+try_image_result/
+*.DS_Store
+lib/
+__MACOSX/
