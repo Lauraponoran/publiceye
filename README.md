@@ -7,6 +7,18 @@ This repository contains the code for the ViCCT project. ViCCT is a fully transf
 
 To perform crowd counting with ViCCT, we first split an image of any resolution into crops of size 224 x 224 or 384 x 384, depending on which ViCCT model is used. These crops are processed individually by ViCCT. Each crop is split into patches of size 16 x 16 and passed through the DeiT network. The output embeddings are resized with linear layers to be of shape 256. Each element of these vectors is considered a pixel of the density map. By concatinating all these resized embedding vectors, we obtain a crop of the final density map. These crops are combined to create the final density map. Overlap is resolved by taking the average pixel value of the overlapping pixels.
 
+## Basic Use
+If you want to use the existing model as is on an image, follow these steps:
+
+First, you must create the environment and install the neccessary requirements. Run these commands in your terminal:
+  conda create -n vicct python=3.10
+  conda activate vicct
+  pip install -r requirements.txt
+
+Afterwards, upload your image to the input_images folder. Once you have done so, run the following command in your terminal:
+  jupyter lab
+
+This command will open an interface where you can run the pre-trained model on your image. Select 'run all' and the notebook will automatically run and output your results in the try_image_result folder.
 
 ## Repository structure
 
