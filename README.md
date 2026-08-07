@@ -10,7 +10,7 @@ To perform crowd counting with ViCCT, we first split an image of any resolution 
 ## Basic Use
 If you want to use the existing model as is on an image, follow these steps:
 
-First, you must create the environment and install the neccessary requirements. Run these commands in your terminal:
+First, you must create the environment and install the neccessary requirements. Run these commands in your terminal (within the appropriate directory, this is assuming you are working out of VS Code):
   conda create -n vicct python=3.10
   conda activate vicct
   pip install -r requirements.txt
