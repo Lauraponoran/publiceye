@@ -1,0 +1,16 @@
+[Unit]
+Description=ViCCT crowd counting Gradio app
+After=network.target
+
+[Service]
+Type=simple
+# Adjust these two paths to match where you actually put the project
+# and which Python has your 'vicct' environment's packages installed.
+WorkingDirectory=/opt/publiceye
+ExecStart=/opt/publiceye/venv/bin/python app.py
+Restart=on-failure
+RestartSec=5
+User=root
+
+[Install]
+WantedBy=multi-user.target

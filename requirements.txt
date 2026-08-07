@@ -9,7 +9,6 @@ pillow
 easydict
 timm
 huggingface_hub
-tensorboard
-tensorboardx
-jupyterlab
 tqdm
+gradio
+spaces
