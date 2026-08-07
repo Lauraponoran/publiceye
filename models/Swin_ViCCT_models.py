@@ -1,4 +1,5 @@
 from timm.models.swin_transformer import _create_swin_transformer
+import re
 import torch
 import torch.nn as nn
 from timm.models import register_model
@@ -41,7 +42,13 @@ class DistilledRegressionTransformer(nn.Module):
         super().__init__()
 
         # Keep only patch_embed + the transformer stages; drop the final norm + classification head.
-        self.base_model = nn.Sequential(*list(base_model.children())[:-2])
+        # The pretrained ViCCT checkpoints were trained against an older timm where the Swin
+        # backbone had a separate `pos_drop` module between patch_embed and the stages (so
+        # `layers` sat at index 2: base_model.2.*). Modern timm folds pos_drop away entirely,
+        # which would silently shift every stage's state_dict key by one and break loading.
+        # We reinsert a no-op placeholder at index 1 purely to keep that indexing/key layout
+        # intact, so pretrained checkpoints still load with the expected key names.
+        self.base_model = nn.Sequential(base_model.patch_embed, nn.Identity(), base_model.layers)
         self.regression_head = ViCCTRegressionHead(224, kwargs['embed_dim'] * 4)
 
     def forward(self, x):
@@ -54,11 +61,23 @@ class DistilledRegressionTransformer(nn.Module):
 #                                           THE MODELS                                         #
 # ============================================================================================ #
 
+_TIMM_INTERNAL_KWARGS = {
+    'pretrained', 'pretrained_cfg', 'pretrained_cfg_overlay',
+    'cache_dir', 'scriptable', 'exportable', 'no_jit',
+}
+
+
 def _clean_kwargs(kwargs):
-    """ timm's `create_model` gets called with drop_rate/drop_path_rate/drop_block_rate=None
-    by the notebook. Modern timm expects floats (or the kwarg to simply be absent), so we
-    strip out anything set to None instead of forwarding it blindly. """
-    return {k: v for k, v in kwargs.items() if v is not None}
+    """ timm's `create_model` (a) auto-injects control kwargs like pretrained=False,
+    pretrained_cfg=None, cache_dir=None into every call, and (b) the notebook itself passes
+    drop_rate/drop_path_rate/drop_block_rate=None. Modern timm's Swin implementation chokes
+    on None floats, and forwarding timm's own control kwargs back into
+    `_create_swin_transformer` collides with the `pretrained=False` we set explicitly below.
+    So: drop timm's internal control kwargs entirely, and drop anything left set to None. """
+    return {
+        k: v for k, v in kwargs.items()
+        if k not in _TIMM_INTERNAL_KWARGS and v is not None
+    }
 
 
 @register_model
@@ -177,11 +196,51 @@ def init_model_state(model, init_path):
     return model
 
 
+_DOWNSAMPLE_KEY_RE = re.compile(r'^(base_model\.2)\.(\d+)\.downsample\.(.*)$')
+
+
+def _remap_downsample_keys(state_dict):
+    """ Older timm placed each stage's PatchMerging *after* that stage's blocks, so
+    layers[i].downsample described the transition INTO stage i+1 (e.g. layers[1].downsample
+    took you from stage 1's dim to stage 2's dim). Modern timm places that same transition
+    at the *start* of the following stage instead: layers[i+1].downsample. The transformer
+    blocks themselves keep identical per-stage indexing either way (their input dim doesn't
+    change), so we only need to shift the downsample keys by one stage index. """
+    remapped = {}
+    for k, v in state_dict.items():
+        m = _DOWNSAMPLE_KEY_RE.match(k)
+        if m:
+            prefix, stage_idx, rest = m.groups()
+            k = f'{prefix}.{int(stage_idx) + 1}.downsample.{rest}'
+        remapped[k] = v
+    return remapped
+
+
 def load_pretrained(model, init_path):
     """ Loads a fully pretrained ViCCT crowd-counting checkpoint (backbone + regression head). """
 
     resume_state = torch.load(init_path, map_location=torch.device('cpu'))
     state_dict = resume_state['state_dict'] if 'state_dict' in resume_state else resume_state
-    model.load_state_dict(state_dict)
+    state_dict = _remap_downsample_keys(state_dict)
+
+    # strict=False because older timm checkpoints also stored `attn_mask` /
+    # `relative_position_index` buffers, which modern timm computes on the fly instead of
+    # persisting. Those aren't learned weights, so skipping them is safe. Anything else
+    # unexpectedly missing/mismatched gets printed so it's not a silent failure.
+    missing, unexpected = model.load_state_dict(state_dict, strict=False)
+
+    real_missing = [k for k in missing]
+    real_unexpected = [k for k in unexpected if not (k.endswith('attn_mask') or k.endswith('relative_position_index'))]
+
+    if real_missing:
+        print(f"WARNING: {len(real_missing)} expected weight(s) were not found in the checkpoint:")
+        for k in real_missing[:10]:
+            print("   ", k)
+    if real_unexpected:
+        print(f"WARNING: {len(real_unexpected)} unexpected weight(s) in the checkpoint were ignored:")
+        for k in real_unexpected[:10]:
+            print("   ", k)
+    if not real_missing and not real_unexpected:
+        print("Checkpoint loaded cleanly (only non-persistent geometry buffers were skipped, as expected).")
 
     return model
