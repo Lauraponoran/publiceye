@@ -44,15 +44,18 @@ MEAN_STD = ([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])  # ImageNet mean/std
 OVERLAP = 32          # min pixels of overlap between adjacent crops
 IGNORE_BUFFER = 16    # pixels ignored at crop borders when reconstructing
 CROP_SIZE = 224
-DEFAULT_SCALE_FACTOR = 0.4
+DEFAULT_SCALE_FACTOR = 0.5   # bumped from 0.4 on 2026-08-10 to match the
+                             # resolution the working dashboard actually feeds
 
 # Density-map -> headcount calibration. The model's raw output sums to some
 # multiple of the true head count rather than the count itself, so this
-# divides it back down. Started at 3000 (from the notebook); recalibrated to
-# 4365 on 2026-08-10 against a Boardwalk webcam frame with an eyeballed count
-# of ~70-75 (was reading 105.5 at 3000). Re-tune this single constant if
-# counts drift high/low again: new_divisor = old_divisor * (shown_count / true_count).
-COUNT_SCALE_DIVISOR = 4365
+# divides it back down. Was briefly recalibrated to 4365 on 2026-08-10, but
+# that was likely compensating for test images being fed in at a higher
+# resolution than the working dashboard's real pipeline uses, not a genuine
+# model miscalibration. Reverted to the notebook's original 3000 now that
+# DEFAULT_SCALE_FACTOR is set to match. Re-tune if counts drift again:
+# new_divisor = old_divisor * (shown_count / true_count).
+COUNT_SCALE_DIVISOR = 3000
 
 img_transform = standard_transforms.Compose([
     standard_transforms.ToTensor(),
