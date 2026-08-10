@@ -227,12 +227,11 @@ def predict(image: Image.Image, scale_factor: float):
     heatmap = _heatmap_overlay(input_image, den, overlay_mask)
     density_map = _density_map_image(den)
 
-    # Rounding to one decimal place implies a precision this model doesn't
-    # have -- calibration testing on 2026-08-10 showed swings from roughly
-    # -20% to +140% against real counts, in both directions, on the same
-    # camera. Report a rounded ballpark and say so explicitly rather than
-    # implying more confidence than the underlying number deserves.
-    result_text = f"Estimated count: ~{round(pred_count)} (rough estimate, not an exact count)"
+    # Rounded rather than shown to 1 decimal place -- calibration testing
+    # on 2026-08-10 showed swings from roughly -20% to +140% against real
+    # counts on the same camera, so a decimal implies more precision than
+    # this model actually has.
+    result_text = f"Estimated count: ~{round(pred_count)}"
 
     return heatmap, density_map, result_text
 
@@ -249,11 +248,7 @@ with gr.Blocks(title="ViCCT Crowd Counting") as demo:
         "# ViCCT Crowd Counting\n"
         "Upload a crowd photo to get an estimated head count and density map, "
         "using the Swin-based ViCCT model (ImageNet-22k pretrained backbone, "
-        "trained on generic crowd-counting data, used as-is/not fine-tuned).\n\n"
-        "**This is a rough estimate, not an exact count.** Calibration testing "
-        "showed the model can both miss real people (seated or low-contrast) "
-        "and pick up background clutter, so error isn't a fixed percentage "
-        "you can correct for -- treat the number as a ballpark."
+        "trained on generic crowd-counting data)."
     )
 
     with gr.Row():
