@@ -54,17 +54,20 @@ DEFAULT_SCALE_FACTOR = 0.5   # bumped from 0.4 on 2026-08-10 to match the
 # ratio, all of which change how much density "mass" the model outputs per
 # head, so re-tune this any time the scale factor changes.
 #
-# 2026-08-10: recalibrated to 12027 against a Boardwalk frame (eyeballed
-# true count ~15), using the current full-sum-with-floor counting method
-# (see DENSITY_FLOOR below) -- NOT comparable to the old 5096/7862 values,
-# which were calibrated against the old per-image-relative-threshold
-# method that predict() no longer uses.
+# 2026-08-10: averaged from 2 calibration points under the current
+# full-sum-with-floor method: 12027 (Boardwalk, true~15) and 9396
+# (Boardwalk, true~16, different frame/time). Deliberately NOT re-tuned
+# per-camera or per-scene -- this needs to generalize beyond one webcam.
 #
-# This is still only ONE calibration point under the new method. Same
-# caution as before applies: get 2-3 more (image, real-count) pairs,
-# average the ratios, don't trust a single frame as the permanent constant.
-# Re-tune: new_divisor = old_divisor * (shown_count / true_count).
-COUNT_SCALE_DIVISOR = 12027
+# Important: don't read this as "accurate to within the gap between those
+# two numbers." The two points disagreed for structurally different
+# reasons -- one run undercounted because seated/low-contrast people got
+# no detection at all, not because the constant was off -- and a divisor
+# can only correct a *consistent proportional* bias. It cannot fix a model
+# that sometimes misses real people and sometimes flags background clutter
+# in the same frame. Treat pred_count as a ballpark estimate, not a
+# precise reading; see the caveat surfaced in predict()'s return value.
+COUNT_SCALE_DIVISOR = 10712
 
 img_transform = standard_transforms.Compose([
     standard_transforms.ToTensor(),
@@ -224,7 +227,14 @@ def predict(image: Image.Image, scale_factor: float):
     heatmap = _heatmap_overlay(input_image, den, overlay_mask)
     density_map = _density_map_image(den)
 
-    return heatmap, density_map, f"Predicted count: {pred_count:.1f}"
+    # Rounding to one decimal place implies a precision this model doesn't
+    # have -- calibration testing on 2026-08-10 showed swings from roughly
+    # -20% to +140% against real counts, in both directions, on the same
+    # camera. Report a rounded ballpark and say so explicitly rather than
+    # implying more confidence than the underlying number deserves.
+    result_text = f"Estimated count: ~{round(pred_count)} (rough estimate, not an exact count)"
+
+    return heatmap, density_map, result_text
 
 
 # --------------------------------------------------------------------------- #
@@ -237,9 +247,13 @@ footer {visibility: hidden}
 with gr.Blocks(title="ViCCT Crowd Counting") as demo:
     gr.Markdown(
         "# ViCCT Crowd Counting\n"
-        "Upload a crowd photo to get a predicted head count and density map, "
+        "Upload a crowd photo to get an estimated head count and density map, "
         "using the Swin-based ViCCT model (ImageNet-22k pretrained backbone, "
-        "trained on generic crowd-counting data)."
+        "trained on generic crowd-counting data, used as-is/not fine-tuned).\n\n"
+        "**This is a rough estimate, not an exact count.** Calibration testing "
+        "showed the model can both miss real people (seated or low-contrast) "
+        "and pick up background clutter, so error isn't a fixed percentage "
+        "you can correct for -- treat the number as a ballpark."
     )
 
     with gr.Row():
