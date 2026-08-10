@@ -1,4 +1,4 @@
-"""
+ap"""
 Public-facing ViCCT crowd-counting demo — self-hosted version.
 
 This mirrors notebooks/Make_image_prediction.ipynb exactly (same model, same
@@ -45,6 +45,14 @@ OVERLAP = 32          # min pixels of overlap between adjacent crops
 IGNORE_BUFFER = 16    # pixels ignored at crop borders when reconstructing
 CROP_SIZE = 224
 DEFAULT_SCALE_FACTOR = 0.4
+
+# Density-map -> headcount calibration. The model's raw output sums to some
+# multiple of the true head count rather than the count itself, so this
+# divides it back down. Started at 3000 (from the notebook); recalibrated to
+# 4365 on 2026-08-10 against a Boardwalk webcam frame with an eyeballed count
+# of ~70-75 (was reading 105.5 at 3000). Re-tune this single constant if
+# counts drift high/low again: new_divisor = old_divisor * (shown_count / true_count).
+COUNT_SCALE_DIVISOR = 4365
 
 img_transform = standard_transforms.Compose([
     standard_transforms.ToTensor(),
@@ -97,7 +105,7 @@ def _visible_density_mask(den: torch.Tensor, threshold: float = 50) -> np.ndarra
     same normalize -> sqrt -> threshold pipeline used for display. Pulled out
     on its own so predict() can total only the density that's visibly 'real'
     signal, instead of summing background noise the eye never sees."""
-    den_heat = den.clone().numpy() / 3000
+    den_heat = den.clone().numpy() / COUNT_SCALE_DIVISOR
     den_heat[den_heat < 0] = 0
 
     max_val = den_heat.max()
@@ -111,7 +119,7 @@ def _visible_density_mask(den: torch.Tensor, threshold: float = 50) -> np.ndarra
 
 def _heatmap_overlay(input_image: Image.Image, den: torch.Tensor, mask: np.ndarray) -> Image.Image:
     img_heat = np.array(input_image).copy()
-    den_heat = den.clone().numpy() / 3000
+    den_heat = den.clone().numpy() / COUNT_SCALE_DIVISOR
     den_heat[den_heat < 0] = 0
 
     max_val = den_heat.max()
@@ -173,7 +181,7 @@ def predict(image: Image.Image, scale_factor: float):
 
     mask = _visible_density_mask(den)
     den_clamped = den.clamp(min=0).numpy()
-    pred_count = float(den_clamped[mask].sum() / 3000)
+    pred_count = float(den_clamped[mask].sum() / COUNT_SCALE_DIVISOR)
 
     heatmap = _heatmap_overlay(input_image, den, mask)
     density_map = _density_map_image(den)
@@ -188,7 +196,7 @@ custom_css = """
 footer {visibility: hidden}
 """
 
-with gr.Blocks(title="ViCCT Crowd Counting", css=custom_css) as demo:
+with gr.Blocks(title="ViCCT Crowd Counting") as demo:
     gr.Markdown(
         "# ViCCT Crowd Counting\n"
         "Upload a crowd photo to get a predicted head count and density map, "
@@ -223,4 +231,4 @@ if __name__ == "__main__":
     # 0.0.0.0 so the app is reachable from outside this server, not just
     # localhost. Change the port here (and in the systemd unit / firewall
     # rule) together if you need a different one.
-    demo.launch(server_name="0.0.0.0", server_port=7860)
+    demo.launch(server_name="0.0.0.0", server_port=7860, css=custom_css)
