@@ -192,27 +192,50 @@ def predict(image: Image.Image, scale_factor: float):
     den = img_equal_unsplit(pred_stack, OVERLAP, IGNORE_BUFFER, img_h, img_w, 1)
     den = den.squeeze()
 
-    # Count from the FULL clamped density map, not the thresholded overlay
-    # mask. The mask is built by normalizing against *this image's own peak
-    # density* before thresholding (see _visible_density_mask), which means
-    # the fraction of density it keeps is different for every image -- an
-    # image with one sharp hotspot (e.g. a noise source like a boat) drags
-    # the threshold up and clips real, spread-out crowd signal; an image
-    # with an evenly spread crowd keeps proportionally more. That's almost
-    # certainly why the same divisor didn't transfer between calibration
-    # images: it wasn't a scale problem, it was two different fractions of
-    # density being summed each time. Summing everything removes that
-    # per-image variable, so the divisor should generalize far better.
-    mask = _visible_density_mask(den)  # overlay tint only, not used in the count below
-    den_clamped = den.clamp(min=0).numpy()
-    pred_count_full = float(den_clamped.sum() / COUNT_SCALE_DIVISOR)
-    pred_count_masked_legacy = float(den_clamped[mask].sum() / COUNT_SCALE_DIVISOR)
-    print(f"[predict] full-sum count={pred_count_full:.1f}  "
-          f"legacy masked-sum count={pred_count_masked_legacy:.1f}  "
-          f"(divisor={COUNT_SCALE_DIVISOR}, not yet recalibrated for full-sum)")
-    pred_count = pred_count_full
+    # --- Counting -----------------------------------------------------
+    # Full-sum (see 2026-08-10 commit) fixed the earlier per-image-relative
+    # threshold bug, but on this Boardwalk test image it overcorrected: with
+    # zero threshold at all, the sum includes every pixel's raw output,
+    # including the low nonzero "hum" the model predicts across open water
+    # and other empty background. That hum is roughly proportional to how
+    # much empty area is in the frame, not to how many people are in it --
+    # so a mostly-water harbor shot accumulates far more background mass
+    # than a tightly-packed crowd photo of similar head count, which both
+    # explains today's ~2.4x overcount (36.3 vs an eyeballed ~15) and gives
+    # a second, cleaner explanation for why one fixed divisor never
+    # transferred between calibration images (see the two masked-sum ratios
+    # from 2026-08-10: 5096 vs 7862): different scenes carry different
+    # amounts of background hum, not just different real people.
+    #
+    # The old threshold wasn't a bad idea, just wrongly built: it normalized
+    # against *each image's own peak* before cutting, so the cutoff floated
+    # per image instead of being a fixed line between "background" and
+    # "person." What's needed is an ABSOLUTE floor in raw model-output
+    # units, applied before any per-image normalization.
+    #
+    # DENSITY_FLOOR below is *not yet calibrated* -- there's no way to pick
+    # it correctly from this machine without running real inference. Left
+    # at 0.0 (equivalent to the current full-sum behaviour) until you can
+    # read the candidate-floor table this prints on every run and pick a
+    # value that (a) knocks the water hum down near zero pixel-count on an
+    # empty-scene test and (b) still keeps real people's peaks intact on a
+    # crowd test. Once you've picked one, hardcode it here and delete the
+    # candidate-floor loop below (or leave it printing -- it's cheap).
+    DENSITY_FLOOR = 0.0  # TODO: set from the [predict] floor-candidate log below
 
-    heatmap = _heatmap_overlay(input_image, den, mask)
+    den_raw = den.numpy()
+    print(f"[predict] raw den stats: min={den_raw.min():.4f} max={den_raw.max():.4f} "
+          f"mean={den_raw.mean():.4f} total_px={den_raw.size}")
+    for floor in (0.0, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0):
+        kept = den_raw > floor
+        c = float(den_raw[kept].sum() / COUNT_SCALE_DIVISOR)
+        print(f"[predict]   floor={floor:>4}: count={c:7.1f}  pixels_kept={kept.sum()}/{den_raw.size}")
+
+    count_mask = den_raw > DENSITY_FLOOR
+    pred_count = float(den_raw[count_mask].sum() / COUNT_SCALE_DIVISOR)
+
+    overlay_mask = _visible_density_mask(den)  # cosmetic tint only, unrelated to pred_count
+    heatmap = _heatmap_overlay(input_image, den, overlay_mask)
     density_map = _density_map_image(den)
 
     return heatmap, density_map, f"Predicted count: {pred_count:.1f}"
