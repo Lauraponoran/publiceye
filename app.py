@@ -44,8 +44,15 @@ MEAN_STD = ([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])  # ImageNet mean/std
 OVERLAP = 32          # min pixels of overlap between adjacent crops
 IGNORE_BUFFER = 16    # pixels ignored at crop borders when reconstructing
 CROP_SIZE = 224
-DEFAULT_SCALE_FACTOR = 0.5   # bumped from 0.4 on 2026-08-10 to match the
-                             # resolution the working dashboard actually feeds
+DEFAULT_SCALE_FACTOR = 0.9   # raised from 0.5 on 2026-08-10 -- 0.5 was
+                             # dropping small/dense heads entirely (see
+                             # swimmers-in-water test), especially in
+                             # crowded scenes; 0.9 recovered a ~75-person
+                             # scene from an estimate of ~37 to ~70 without
+                             # even re-tuning COUNT_SCALE_DIVISOR below.
+                             # Costs meaningfully more CPU per request (far
+                             # more 224px crops on the 1-core/2GB box) --
+                             # accepted tradeoff, accuracy over speed here.
 
 # Density-map -> headcount calibration. The model's raw output sums to some
 # multiple of the true head count rather than the count itself, so this
@@ -56,17 +63,23 @@ DEFAULT_SCALE_FACTOR = 0.5   # bumped from 0.4 on 2026-08-10 to match the
 #
 # 2026-08-10: averaged from 2 calibration points under the current
 # full-sum-with-floor method: 12027 (Boardwalk, true~15) and 9396
-# (Boardwalk, true~16, different frame/time). Deliberately NOT re-tuned
-# per-camera or per-scene -- this needs to generalize beyond one webcam.
+# (Boardwalk, true~16, different frame/time) -- both at scale_factor=0.5.
+# Deliberately NOT re-tuned per-camera or per-scene -- this needs to
+# generalize beyond one webcam.
 #
-# Important: don't read this as "accurate to within the gap between those
-# two numbers." The two points disagreed for structurally different
-# reasons -- one run undercounted because seated/low-contrast people got
-# no detection at all, not because the constant was off -- and a divisor
-# can only correct a *consistent proportional* bias. It cannot fix a model
-# that sometimes misses real people and sometimes flags background clutter
-# in the same frame. Treat pred_count as a ballpark estimate, not a
-# precise reading; see the caveat surfaced in predict()'s return value.
+# Left UNCHANGED after bumping DEFAULT_SCALE_FACTOR to 0.9: a dense ~75-
+# person scene at scale=0.9 with this same divisor gave ~70, i.e. it held
+# up reasonably well without retuning, despite the comment above saying to
+# expect otherwise. That's one data point at the new scale though -- it
+# hasn't been re-checked against a sparse scene at 0.9 (the two points this
+# was calibrated from were both at 0.5), so don't assume it's settled.
+#
+# Important: don't read either of those numbers as "accurate to within the
+# gap between the two 0.5 points." The two 0.5 points disagreed for
+# structurally different reasons -- one run undercounted because seated/
+# low-contrast people got no detection at all, not because the constant
+# was off -- and a divisor can only correct a *consistent proportional*
+# bias. Treat pred_count as a ballpark estimate, not a precise reading.
 COUNT_SCALE_DIVISOR = 10712
 
 img_transform = standard_transforms.Compose([
@@ -259,7 +272,8 @@ with gr.Blocks(title="ViCCT Crowd Counting") as demo:
                 label="Scale factor",
                 info=(
                     "Downscale large images so heads aren't too large for the model to "
-                    "recognise. 0.5 matches the dashboard's standard."
+                    "recognise. Higher keeps more detail for dense/small heads at the "
+                    "cost of slower inference; 0.9 is the current default."
                 ),
             )
             run_btn = gr.Button("Run", variant="primary")
