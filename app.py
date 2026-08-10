@@ -154,7 +154,7 @@ def predict(image: Image.Image, scale_factor: float):
 
     den = img_equal_unsplit(pred_stack, OVERLAP, IGNORE_BUFFER, img_h, img_w, 1)
     den = den.squeeze()
-    pred_count = float(den.sum() / 3000)
+    pred_count = float(den.clamp(min=0).sum() / 3000)
 
     heatmap = _heatmap_overlay(input_image, den)
     density_map = _density_map_image(den)
@@ -165,7 +165,11 @@ def predict(image: Image.Image, scale_factor: float):
 # --------------------------------------------------------------------------- #
 # UI
 # --------------------------------------------------------------------------- #
-with gr.Blocks(title="ViCCT Crowd Counting") as demo:
+custom_css = """
+footer {visibility: hidden}
+"""
+
+with gr.Blocks(title="ViCCT Crowd Counting", css=custom_css) as demo:
     gr.Markdown(
         "# ViCCT Crowd Counting\n"
         "Upload a crowd photo to get a predicted head count and density map, "
