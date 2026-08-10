@@ -52,11 +52,18 @@ DEFAULT_SCALE_FACTOR = 0.5   # bumped from 0.4 on 2026-08-10 to match the
 # divides it back down. This value is tied to DEFAULT_SCALE_FACTOR -- a
 # different scale changes image size, crop count, and head-size-to-crop
 # ratio, all of which change how much density "mass" the model outputs per
-# head, so re-tune this any time the scale factor changes. Calibrated to
-# 5096 on 2026-08-10 at scale_factor=0.5, against a Boardwalk webcam frame
-# with an eyeballed count of ~72 (was reading 122.3 at 3000). Re-tune:
-# new_divisor = old_divisor * (shown_count / true_count).
-COUNT_SCALE_DIVISOR = 5096
+# head, so re-tune this any time the scale factor changes.
+#
+# STALE as of 2026-08-10: the 5096 value below was calibrated against the
+# old *masked* sum (den_clamped[mask].sum()), which predict() no longer
+# uses -- it now sums the full density map (see the comment in predict()
+# for why). Summing the full map instead of the thresholded overlay mask
+# will pull in more total density per image, so 5096 is almost certainly
+# too low now and will overcount until it's redone against the new
+# full-sum method. Re-tune: new_divisor = old_divisor * (shown_count / true_count),
+# using at least 2-3 (image, real-count) pairs and averaging the ratios
+# rather than trusting one image's calibration as the permanent constant.
+COUNT_SCALE_DIVISOR = 5096  # TODO: recalibrate for full-sum counting
 
 img_transform = standard_transforms.Compose([
     standard_transforms.ToTensor(),
@@ -106,9 +113,11 @@ MODEL = _load_model()
 # --------------------------------------------------------------------------- #
 def _visible_density_mask(den: torch.Tensor, threshold: float = 50) -> np.ndarray:
     """Which pixels actually show up in the heatmap overlay, i.e. cleared the
-    same normalize -> sqrt -> threshold pipeline used for display. Pulled out
-    on its own so predict() can total only the density that's visibly 'real'
-    signal, instead of summing background noise the eye never sees."""
+    same normalize -> sqrt -> threshold pipeline used for display.
+
+    OVERLAY/COSMETIC USE ONLY. Do not use this mask's output to compute the
+    numeric headcount (see predict() for why) -- it's kept here purely to
+    decide which pixels get tinted in _heatmap_overlay()."""
     den_heat = den.clone().numpy() / COUNT_SCALE_DIVISOR
     den_heat[den_heat < 0] = 0
 
@@ -183,9 +192,25 @@ def predict(image: Image.Image, scale_factor: float):
     den = img_equal_unsplit(pred_stack, OVERLAP, IGNORE_BUFFER, img_h, img_w, 1)
     den = den.squeeze()
 
-    mask = _visible_density_mask(den)
+    # Count from the FULL clamped density map, not the thresholded overlay
+    # mask. The mask is built by normalizing against *this image's own peak
+    # density* before thresholding (see _visible_density_mask), which means
+    # the fraction of density it keeps is different for every image -- an
+    # image with one sharp hotspot (e.g. a noise source like a boat) drags
+    # the threshold up and clips real, spread-out crowd signal; an image
+    # with an evenly spread crowd keeps proportionally more. That's almost
+    # certainly why the same divisor didn't transfer between calibration
+    # images: it wasn't a scale problem, it was two different fractions of
+    # density being summed each time. Summing everything removes that
+    # per-image variable, so the divisor should generalize far better.
+    mask = _visible_density_mask(den)  # overlay tint only, not used in the count below
     den_clamped = den.clamp(min=0).numpy()
-    pred_count = float(den_clamped[mask].sum() / COUNT_SCALE_DIVISOR)
+    pred_count_full = float(den_clamped.sum() / COUNT_SCALE_DIVISOR)
+    pred_count_masked_legacy = float(den_clamped[mask].sum() / COUNT_SCALE_DIVISOR)
+    print(f"[predict] full-sum count={pred_count_full:.1f}  "
+          f"legacy masked-sum count={pred_count_masked_legacy:.1f}  "
+          f"(divisor={COUNT_SCALE_DIVISOR}, not yet recalibrated for full-sum)")
+    pred_count = pred_count_full
 
     heatmap = _heatmap_overlay(input_image, den, mask)
     density_map = _density_map_image(den)
