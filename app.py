@@ -54,16 +54,17 @@ DEFAULT_SCALE_FACTOR = 0.5   # bumped from 0.4 on 2026-08-10 to match the
 # ratio, all of which change how much density "mass" the model outputs per
 # head, so re-tune this any time the scale factor changes.
 #
-# STALE as of 2026-08-10: the 5096 value below was calibrated against the
-# old *masked* sum (den_clamped[mask].sum()), which predict() no longer
-# uses -- it now sums the full density map (see the comment in predict()
-# for why). Summing the full map instead of the thresholded overlay mask
-# will pull in more total density per image, so 5096 is almost certainly
-# too low now and will overcount until it's redone against the new
-# full-sum method. Re-tune: new_divisor = old_divisor * (shown_count / true_count),
-# using at least 2-3 (image, real-count) pairs and averaging the ratios
-# rather than trusting one image's calibration as the permanent constant.
-COUNT_SCALE_DIVISOR = 5096  # TODO: recalibrate for full-sum counting
+# 2026-08-10: recalibrated to 12027 against a Boardwalk frame (eyeballed
+# true count ~15), using the current full-sum-with-floor counting method
+# (see DENSITY_FLOOR below) -- NOT comparable to the old 5096/7862 values,
+# which were calibrated against the old per-image-relative-threshold
+# method that predict() no longer uses.
+#
+# This is still only ONE calibration point under the new method. Same
+# caution as before applies: get 2-3 more (image, real-count) pairs,
+# average the ratios, don't trust a single frame as the permanent constant.
+# Re-tune: new_divisor = old_divisor * (shown_count / true_count).
+COUNT_SCALE_DIVISOR = 12027
 
 img_transform = standard_transforms.Compose([
     standard_transforms.ToTensor(),
@@ -193,35 +194,17 @@ def predict(image: Image.Image, scale_factor: float):
     den = den.squeeze()
 
     # --- Counting -----------------------------------------------------
-    # Full-sum (see 2026-08-10 commit) fixed the earlier per-image-relative
-    # threshold bug, but on this Boardwalk test image it overcorrected: with
-    # zero threshold at all, the sum includes every pixel's raw output,
-    # including the low nonzero "hum" the model predicts across open water
-    # and other empty background. That hum is roughly proportional to how
-    # much empty area is in the frame, not to how many people are in it --
-    # so a mostly-water harbor shot accumulates far more background mass
-    # than a tightly-packed crowd photo of similar head count, which both
-    # explains today's ~2.4x overcount (36.3 vs an eyeballed ~15) and gives
-    # a second, cleaner explanation for why one fixed divisor never
-    # transferred between calibration images (see the two masked-sum ratios
-    # from 2026-08-10: 5096 vs 7862): different scenes carry different
-    # amounts of background hum, not just different real people.
-    #
-    # The old threshold wasn't a bad idea, just wrongly built: it normalized
-    # against *each image's own peak* before cutting, so the cutoff floated
-    # per image instead of being a fixed line between "background" and
-    # "person." What's needed is an ABSOLUTE floor in raw model-output
-    # units, applied before any per-image normalization.
-    #
-    # DENSITY_FLOOR below is *not yet calibrated* -- there's no way to pick
-    # it correctly from this machine without running real inference. Left
-    # at 0.0 (equivalent to the current full-sum behaviour) until you can
-    # read the candidate-floor table this prints on every run and pick a
-    # value that (a) knocks the water hum down near zero pixel-count on an
-    # empty-scene test and (b) still keeps real people's peaks intact on a
-    # crowd test. Once you've picked one, hardcode it here and delete the
-    # candidate-floor loop below (or leave it printing -- it's cheap).
-    DENSITY_FLOOR = 0.0  # TODO: set from the [predict] floor-candidate log below
+    # Tested (2026-08-10, this Boardwalk frame): summing everything above a
+    # low absolute floor barely changes the total (36.3 at floor=0 vs 32.4
+    # at floor=5.0, while pixel count kept drops ~80%) -- so background
+    # "hum" across empty water is NOT what was driving the overcount, it's
+    # a minor ~10% contributor at most. The real mass is concentrated in
+    # genuine head-shaped peaks. That rules out the "empty-area hum"
+    # theory; the actual fix was a stale COUNT_SCALE_DIVISOR (see the
+    # constant above), not a thresholding problem. DENSITY_FLOOR is kept
+    # at a small value purely as cheap insurance against literal near-zero
+    # noise -- it is doing very little real work here.
+    DENSITY_FLOOR = 1.0
 
     den_raw = den.numpy()
     # flush=True because stdout isn't a TTY under systemd -- Python switches
