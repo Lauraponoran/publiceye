@@ -224,12 +224,15 @@ def predict(image: Image.Image, scale_factor: float):
     DENSITY_FLOOR = 0.0  # TODO: set from the [predict] floor-candidate log below
 
     den_raw = den.numpy()
+    # flush=True because stdout isn't a TTY under systemd -- Python switches
+    # to block-buffering in that case, so without this these lines can sit
+    # in a buffer indefinitely instead of reaching journalctl per-request.
     print(f"[predict] raw den stats: min={den_raw.min():.4f} max={den_raw.max():.4f} "
-          f"mean={den_raw.mean():.4f} total_px={den_raw.size}")
+          f"mean={den_raw.mean():.4f} total_px={den_raw.size}", flush=True)
     for floor in (0.0, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0):
         kept = den_raw > floor
         c = float(den_raw[kept].sum() / COUNT_SCALE_DIVISOR)
-        print(f"[predict]   floor={floor:>4}: count={c:7.1f}  pixels_kept={kept.sum()}/{den_raw.size}")
+        print(f"[predict]   floor={floor:>4}: count={c:7.1f}  pixels_kept={kept.sum()}/{den_raw.size}", flush=True)
 
     count_mask = den_raw > DENSITY_FLOOR
     pred_count = float(den_raw[count_mask].sum() / COUNT_SCALE_DIVISOR)
