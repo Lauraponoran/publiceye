@@ -1,4 +1,4 @@
-ap"""
+"""
 Public-facing ViCCT crowd-counting demo — self-hosted version.
 
 This mirrors notebooks/Make_image_prediction.ipynb exactly (same model, same
