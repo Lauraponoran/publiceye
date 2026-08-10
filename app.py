@@ -49,13 +49,14 @@ DEFAULT_SCALE_FACTOR = 0.5   # bumped from 0.4 on 2026-08-10 to match the
 
 # Density-map -> headcount calibration. The model's raw output sums to some
 # multiple of the true head count rather than the count itself, so this
-# divides it back down. Was briefly recalibrated to 4365 on 2026-08-10, but
-# that was likely compensating for test images being fed in at a higher
-# resolution than the working dashboard's real pipeline uses, not a genuine
-# model miscalibration. Reverted to the notebook's original 3000 now that
-# DEFAULT_SCALE_FACTOR is set to match. Re-tune if counts drift again:
+# divides it back down. This value is tied to DEFAULT_SCALE_FACTOR -- a
+# different scale changes image size, crop count, and head-size-to-crop
+# ratio, all of which change how much density "mass" the model outputs per
+# head, so re-tune this any time the scale factor changes. Calibrated to
+# 5096 on 2026-08-10 at scale_factor=0.5, against a Boardwalk webcam frame
+# with an eyeballed count of ~72 (was reading 122.3 at 3000). Re-tune:
 # new_divisor = old_divisor * (shown_count / true_count).
-COUNT_SCALE_DIVISOR = 3000
+COUNT_SCALE_DIVISOR = 5096
 
 img_transform = standard_transforms.Compose([
     standard_transforms.ToTensor(),
@@ -215,7 +216,7 @@ with gr.Blocks(title="ViCCT Crowd Counting") as demo:
                 label="Scale factor",
                 info=(
                     "Downscale large images so heads aren't too large for the model to "
-                    "recognise. 0.4 matches the notebook's default."
+                    "recognise. 0.5 matches the dashboard's standard."
                 ),
             )
             run_btn = gr.Button("Run", variant="primary")
