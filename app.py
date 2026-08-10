@@ -92,7 +92,24 @@ MODEL = _load_model()
 # --------------------------------------------------------------------------- #
 # Post-processing — same math as the notebook's display + EXPERIMENTAL cells.
 # --------------------------------------------------------------------------- #
-def _heatmap_overlay(input_image: Image.Image, den: torch.Tensor) -> Image.Image:
+def _visible_density_mask(den: torch.Tensor, threshold: float = 50) -> np.ndarray:
+    """Which pixels actually show up in the heatmap overlay, i.e. cleared the
+    same normalize -> sqrt -> threshold pipeline used for display. Pulled out
+    on its own so predict() can total only the density that's visibly 'real'
+    signal, instead of summing background noise the eye never sees."""
+    den_heat = den.clone().numpy() / 3000
+    den_heat[den_heat < 0] = 0
+
+    max_val = den_heat.max()
+    if max_val > 0:
+        den_heat = den_heat / max_val
+    den_heat **= 0.5
+    den_heat *= 255
+
+    return den_heat >= threshold
+
+
+def _heatmap_overlay(input_image: Image.Image, den: torch.Tensor, mask: np.ndarray) -> Image.Image:
     img_heat = np.array(input_image).copy()
     den_heat = den.clone().numpy() / 3000
     den_heat[den_heat < 0] = 0
@@ -102,9 +119,8 @@ def _heatmap_overlay(input_image: Image.Image, den: torch.Tensor) -> Image.Image
         den_heat = den_heat / max_val
     den_heat **= 0.5
     den_heat *= 255
-    den_heat[den_heat < 50] = 0
+    den_heat[~mask] = 0
 
-    mask = den_heat > 0
     img_heat[:, :, 0][mask] = img_heat[:, :, 0][mask] / 2
     img_heat[:, :, 1][mask] = img_heat[:, :, 1][mask] / 2
     img_heat[:, :, 2][mask] = den_heat[mask]
@@ -154,9 +170,12 @@ def predict(image: Image.Image, scale_factor: float):
 
     den = img_equal_unsplit(pred_stack, OVERLAP, IGNORE_BUFFER, img_h, img_w, 1)
     den = den.squeeze()
-    pred_count = float(den.clamp(min=0).sum() / 3000)
 
-    heatmap = _heatmap_overlay(input_image, den)
+    mask = _visible_density_mask(den)
+    den_clamped = den.clamp(min=0).numpy()
+    pred_count = float(den_clamped[mask].sum() / 3000)
+
+    heatmap = _heatmap_overlay(input_image, den, mask)
     density_map = _density_map_image(den)
 
     return heatmap, density_map, f"Predicted count: {pred_count:.1f}"
